@@ -353,8 +353,6 @@ async fn build_release(
     get_output_logged("git", &["pull"], aoscbootstrap_dir, &mut logs).await?;
 
     let mut args = vec![
-        "bash",
-        "-c",
         "./contrib/generate-releases.sh",
         "base",
         "desktop",
