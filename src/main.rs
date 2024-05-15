@@ -11,11 +11,10 @@ use axum::{
     Json, Router,
 };
 use bot::{answer, Command};
-use db::Db;
+use db::{Build, Db};
 use eyre::Result;
-use redis::RedisError;
 use reqwest::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Snafu};
 use teloxide::{
     dispatching::{Dispatcher, HandlerExt, UpdateFilterExt},
@@ -118,13 +117,14 @@ async fn main() -> Result<()> {
 struct BuildDoneRequest {
     id: i64,
     arch: String,
+    build_type: String,
     has_error: bool,
 }
 
 #[derive(Debug, Snafu)]
 enum BuildRequestError {
     #[snafu(display("Failed to mod redis database."))]
-    Redis { source: RedisError },
+    Redis { source: eyre::Error },
     #[snafu(display("Bad secret."))]
     BadSecret,
     #[snafu(transparent)]
@@ -168,7 +168,8 @@ async fn build_done(
     bot.send_message(
         ChatId(request.id),
         format!(
-            "Build {}: {}",
+            "Build {} {}: {}",
+            request.build_type,
             if !request.has_error {
                 "success"
             } else {
@@ -187,21 +188,27 @@ struct BuildStartRequest {
     arch: String,
 }
 
+#[derive(Serialize)]
+enum Status {
+    Working(Build),
+    Pending,
+}
+
 async fn build_is_started(
     header: HeaderMap,
     State(state): State<Arc<AppState>>,
     Query(request): Query<BuildStartRequest>,
-) -> Result<Json<i64>, BuildRequestError> {
+) -> Result<Json<Status>, BuildRequestError> {
     let AppState { db, secret, .. } = &*state;
     if header.get("secret").map(|x| *x != secret).unwrap_or(true) {
         return Err(BuildRequestError::BadSecret);
     }
 
     let mut db = db.lock().await;
-    let num = db
-        .worker_is_start(&request.arch)
-        .await
-        .context(RedisSnafu)?;
+    let build = db.get(&request.arch).await.context(RedisSnafu);
 
-    Ok(Json(num))
+    match build {
+        Ok(b) => Ok(Json(Status::Working(b))),
+        Err(_) => Ok(Json(Status::Pending)),
+    }
 }

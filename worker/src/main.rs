@@ -1,8 +1,14 @@
-use std::{path::Path, process::Output, time::Duration};
+use std::{
+    fmt::Display,
+    path::{Path, PathBuf},
+    process::Output,
+    time::Duration,
+};
 
 use chrono::Local;
 use eyre::OptionExt;
 use reqwest::{Client, ClientBuilder};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::{
     fs::{self, read_dir},
@@ -11,6 +17,35 @@ use tokio::{
 };
 use tracing::{error, info, level_filters::LevelFilter, warn};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use walkdir::WalkDir;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Build {
+    pub id: i64,
+    pub arch: String,
+    pub build_type: BuildType,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum BuildType {
+    Livekit,
+    Release,
+}
+
+impl Display for BuildType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BuildType::Livekit => write!(f, "livekit"),
+            BuildType::Release => write!(f, "release"),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+enum Status {
+    Working(Build),
+    Pending,
+}
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -75,88 +110,14 @@ async fn worker(
         .await?;
 
     let resp = resp.error_for_status()?;
-    let id = resp.json::<i64>().await?;
+    let status = resp.json::<Status>().await?;
 
-    if id != -1 {
+    if let Status::Working(build) = status {
         info!("{} is started", arch);
-        let mklive_dir = Path::new("aosc-mklive");
-        let mut logs = vec![];
-        if !mklive_dir.is_dir() {
-            get_output_logged(
-                "git",
-                &["clone", "https://github.com/AOSC-Dev/aosc-mklive"],
-                Path::new("."),
-                &mut logs,
-            )
-            .await?;
-        }
-
-        get_output_logged("git", &["pull"], mklive_dir, &mut logs).await?;
-
-        let mut dir = read_dir(mklive_dir).await?;
-        loop {
-            if let Ok(Some(i)) = dir.next_entry().await {
-                let path = i.path();
-
-                if path
-                    .extension()
-                    .map(|x| x == "iso" || x == "sha256sum")
-                    .unwrap_or(false)
-                {
-                    fs::remove_file(i.path()).await?;
-                }
-
-                let name = path.file_name();
-                if name
-                    .map(|x| {
-                        ["livekit", "iso", "to-squash", "memtest", "sb"]
-                            .contains(&x.to_string_lossy().to_string().as_str())
-                    })
-                    .unwrap_or(false)
-                {
-                    fs::remove_dir_all(i.path()).await?;
-                }
-            } else {
-                break;
-            }
-        }
-
-        let mklive =
-            get_output_logged("bash", &["./aosc-mklive.sh"], mklive_dir, &mut logs).await?;
-        let success = mklive.status.success();
-        let resp = client
-            .post(format!("{uri}/done"))
-            .header("secret", secret)
-            .json(&json!({
-                "id": id,
-                "arch": arch,
-                "has_error": !success,
-            }))
-            .send()
-            .await?;
-
-        resp.error_for_status()?;
-        
-        let mut dir = read_dir(mklive_dir).await?;
-        loop {
-            if let Ok(Some(i)) = dir.next_entry().await {
-                if i.path().extension().map(|x| x == "iso").unwrap_or(false) {
-                    run_logged_with_retry(
-                        "scp",
-                        &[
-                            "-r",
-                            &i.path().to_string_lossy(),
-                            &format!("maintainers@{}:/lookaside/private/aosc-os", host),
-                        ],
-                        &mklive_dir,
-                        &mut logs,
-                    )
-                    .await?;
-                }
-            } else {
-                break;
-            }
-        } 
+        let logs = match build.build_type {
+            BuildType::Livekit => build_livekit(client, secret, arch, host, uri, build.id).await?,
+            BuildType::Release => build_release(client, secret, arch, host, uri, build.id).await?,
+        };
 
         fs::write("./log", logs).await?;
 
@@ -200,6 +161,96 @@ async fn worker(
     }
 
     Ok(())
+}
+
+async fn build_livekit(
+    client: &Client,
+    secret: &str,
+    arch: &str,
+    host: &str,
+    uri: &str,
+    id: i64,
+) -> eyre::Result<Vec<u8>> {
+    let mklive_dir = Path::new("aosc-mklive");
+    let mut logs = vec![];
+    if !mklive_dir.is_dir() {
+        get_output_logged(
+            "git",
+            &["clone", "https://github.com/AOSC-Dev/aosc-mklive"],
+            Path::new("."),
+            &mut logs,
+        )
+        .await?;
+    }
+    get_output_logged("git", &["pull"], mklive_dir, &mut logs).await?;
+    let mut dir = read_dir(mklive_dir).await?;
+    loop {
+        if let Ok(Some(i)) = dir.next_entry().await {
+            let path = i.path();
+
+            if path
+                .extension()
+                .map(|x| x == "iso" || x == "sha256sum")
+                .unwrap_or(false)
+            {
+                fs::remove_file(i.path()).await?;
+            }
+
+            let name = path.file_name();
+            if name
+                .map(|x| {
+                    ["livekit", "iso", "to-squash", "memtest", "sb"]
+                        .contains(&x.to_string_lossy().to_string().as_str())
+                })
+                .unwrap_or(false)
+            {
+                fs::remove_dir_all(i.path()).await?;
+            }
+        } else {
+            break;
+        }
+    }
+    let mklive = get_output_logged("bash", &["./aosc-mklive.sh"], mklive_dir, &mut logs).await?;
+    let success = mklive.status.success();
+    let resp = client
+        .post(format!("{uri}/done"))
+        .header("secret", secret)
+        .json(&json!({
+            "id": id,
+            "arch": arch,
+            "build_type": "livekit",
+            "has_error": !success,
+        }))
+        .send()
+        .await?;
+    resp.error_for_status()?;
+
+    let mut dir = read_dir(mklive_dir).await?;
+    loop {
+        if let Ok(Some(i)) = dir.next_entry().await {
+            if i.path()
+                .extension()
+                .map(|x| x == "iso" || x == "sha256sum")
+                .unwrap_or(false)
+            {
+                run_logged_with_retry(
+                    "scp",
+                    &[
+                        "-r",
+                        &i.path().to_string_lossy(),
+                        &format!("maintainers@{}:/lookaside/private/aosc-os", host),
+                    ],
+                    &mklive_dir,
+                    &mut logs,
+                )
+                .await?;
+            }
+        } else {
+            break;
+        }
+    }
+
+    Ok(logs)
 }
 
 async fn get_output_logged(
@@ -277,4 +328,88 @@ async fn run_logged_with_retry(
     warn!("Failed too many times running `{cmd} {}`", args.join(" "));
 
     Ok(false)
+}
+
+async fn build_release(
+    client: &Client,
+    secret: &str,
+    arch: &str,
+    host: &str,
+    uri: &str,
+    id: i64,
+) -> eyre::Result<Vec<u8>> {
+    let aoscbootstrap_dir = Path::new("aoscbootstrap");
+    let mut logs = vec![];
+    if !aoscbootstrap_dir.is_dir() {
+        get_output_logged(
+            "git",
+            &["clone", "https://github.com/AOSC-Dev/aoscbootstrap"],
+            Path::new("."),
+            &mut logs,
+        )
+        .await?;
+    }
+
+    get_output_logged("git", &["pull"], aoscbootstrap_dir, &mut logs).await?;
+
+    let mut args = vec![
+        "bash",
+        "-c",
+        "./contrib/generate-releases.sh",
+        "base",
+        "desktop",
+        "server",
+    ];
+
+    if arch == "amd64" {
+        args.push("desktop+nvidia");
+    }
+
+    let general_release = get_output_logged("bash", &args, aoscbootstrap_dir, &mut logs).await?;
+    let success = general_release.status.success();
+    let resp = client
+        .post(format!("{uri}/done"))
+        .header("secret", secret)
+        .json(&json!({
+            "id": id,
+            "arch": arch,
+            "build_type": "release",
+            "has_error": !success,
+        }))
+        .send()
+        .await?;
+    resp.error_for_status()?;
+
+    let paths = tokio::task::spawn_blocking(move || -> eyre::Result<Vec<PathBuf>> {
+        let mut v = vec![];
+        for i in WalkDir::new(aoscbootstrap_dir).min_depth(2).max_depth(2) {
+            let i = i?;
+            if i.path()
+                .extension()
+                .map(|x| x == "xz" || x == "squashfs" || x == "sha256sum")
+                .unwrap_or(false)
+            {
+                v.push(i.path().to_path_buf());
+            }
+        }
+
+        Ok(v)
+    })
+    .await??;
+
+    for p in paths {
+        run_logged_with_retry(
+            "scp",
+            &[
+                "-r",
+                &p.to_string_lossy(),
+                &format!("maintainers@{}:/lookaside/private/aosc-os", host),
+            ],
+            &aoscbootstrap_dir,
+            &mut logs,
+        )
+        .await?;
+    }
+
+    Ok(logs)
 }

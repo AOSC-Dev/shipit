@@ -9,7 +9,7 @@ use teloxide::{
 
 use tracing::error;
 
-use crate::{AppState, ARCHS};
+use crate::{db::{Build, BuildType}, AppState, ARCHS};
 
 #[derive(BotCommands, Clone, Debug)]
 #[command(
@@ -23,7 +23,9 @@ pub enum Command {
     Start(String),
     #[command(description = "Login")]
     Login,
-    #[command(description = "Start a build job: /build [archs] (e.g., /build amd64,arm64)")]
+    #[command(
+        description = "Start a build job: /build [type] [archs] (e.g., /build livekit amd64,arm64)"
+    )]
     Build(String),
     #[command(description = "Show queue and server status: /status")]
     Status,
@@ -42,7 +44,7 @@ pub async fn answer(
             bot.send_message(msg.chat.id, Command::descriptions().to_string())
                 .await?;
         }
-        Command::Build(archs) => {
+        Command::Build(args) => {
             let is_login = is_login(&msg.chat.id, secret).await;
 
             if !is_login {
@@ -50,23 +52,41 @@ pub async fn answer(
             }
 
             let mut db = db.lock().await;
+            let mut args_split = args.split_ascii_whitespace();
 
-            let archs = if archs.is_empty() {
-                ARCHS.iter().map(|x| x.to_owned()).collect::<Vec<_>>()
-            } else {
-                archs.split_whitespace().collect::<Vec<_>>()
+            let build_type = args_split.next();
+
+            let build_type = match build_type {
+                Some("livekit") => BuildType::Livekit,
+                Some("release") => BuildType::Release,
+                _ => {
+                    bot.send_message(msg.chat.id, Command::descriptions().to_string())
+                        .await?;
+                    return Ok(());
+                }
+            };
+
+            let archs = args_split.next();
+
+            let archs = match archs {
+                Some(a) => a.split_whitespace().collect::<Vec<_>>(),
+                None => ARCHS.iter().map(|x| x.to_owned()).collect::<Vec<_>>(),
             };
 
             for i in archs {
-                if db.get(i).await.map(|id| id != -1).unwrap_or(true) {
+                if db.get(i).await.is_ok() {
                     bot.send_message(msg.chat.id, "Another build task is already running.")
                         .await?;
                     return Ok(());
                 }
 
-                match db.set_building(i, msg.chat.id.0).await {
+                match db.set_building(i, &Build {
+                    id: msg.chat.id.0,
+                    arch: i.to_string(),
+                    build_type: build_type.clone(),
+                }).await {
                     Ok(_) => {
-                        bot.send_message(msg.chat.id, format!("Building for {}", i))
+                        bot.send_message(msg.chat.id, format!("Building {} for {}", build_type, i))
                             .await?;
                     }
                     Err(e) => {
