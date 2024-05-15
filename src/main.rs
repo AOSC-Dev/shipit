@@ -169,7 +169,7 @@ async fn build_done(
         ChatId(request.id),
         format!(
             "Build {}: {}",
-            if request.has_error {
+            if !request.has_error {
                 "success"
             } else {
                 "has error"

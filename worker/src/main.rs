@@ -124,14 +124,13 @@ async fn worker(
         let mklive =
             get_output_logged("bash", &["./aosc-mklive.sh"], mklive_dir, &mut logs).await?;
         let success = mklive.status.success();
-
         let resp = client
             .post(format!("{uri}/done"))
             .header("secret", secret)
             .json(&json!({
                 "id": id,
                 "arch": arch,
-                "has_error":!success,
+                "has_error": !success,
             }))
             .send()
             .await?;
