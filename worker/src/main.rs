@@ -137,6 +137,27 @@ async fn worker(
             .await?;
 
         resp.error_for_status()?;
+        
+        let mut dir = read_dir(mklive_dir).await?;
+        loop {
+            if let Ok(Some(i)) = dir.next_entry().await {
+                if i.path().extension().map(|x| x == "iso").unwrap_or(false) {
+                    run_logged_with_retry(
+                        "scp",
+                        &[
+                            "-r",
+                            &i.path().to_string_lossy(),
+                            &format!("maintainers@{}:/lookaside/private/aosc-os", host),
+                        ],
+                        &mklive_dir,
+                        &mut logs,
+                    )
+                    .await?;
+                }
+            } else {
+                break;
+            }
+        } 
 
         fs::write("./log", logs).await?;
 
