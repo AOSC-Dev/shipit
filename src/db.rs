@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display};
+use std::fmt::Display;
 
 use redis::{aio::MultiplexedConnection, AsyncCommands};
 use serde::{Deserialize, Serialize};
@@ -57,12 +57,17 @@ impl Db {
         Ok(())
     }
 
-    pub async fn all_worker(&mut self) -> eyre::Result<HashMap<String, bool>> {
+    pub async fn running_worker(&mut self) -> eyre::Result<Vec<Build>> {
         let s: Vec<String> = redis::cmd("KEYS")
             .arg(format!("shipit:*"))
             .query_async(&mut self.conn)
             .await?;
 
-        todo!()
+        let mut v = vec![];
+        for i in s {
+            v.push(serde_json::from_str(&i)?);
+        }
+
+        Ok(v)
     }
 }

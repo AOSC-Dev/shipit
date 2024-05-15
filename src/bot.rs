@@ -9,7 +9,10 @@ use teloxide::{
 
 use tracing::error;
 
-use crate::{db::{Build, BuildType}, AppState, ARCHS};
+use crate::{
+    db::{Build, BuildType},
+    AppState, ARCHS,
+};
 
 #[derive(BotCommands, Clone, Debug)]
 #[command(
@@ -80,11 +83,17 @@ pub async fn answer(
                     return Ok(());
                 }
 
-                match db.set_building(i, &Build {
-                    id: msg.chat.id.0,
-                    arch: i.to_string(),
-                    build_type: build_type.clone(),
-                }).await {
+                match db
+                    .set_building(
+                        i,
+                        &Build {
+                            id: msg.chat.id.0,
+                            arch: i.to_string(),
+                            build_type: build_type.clone(),
+                        },
+                    )
+                    .await
+                {
                     Ok(_) => {
                         bot.send_message(msg.chat.id, format!("Building {} for {}", build_type, i))
                             .await?;
@@ -101,17 +110,13 @@ pub async fn answer(
         }
         Command::Status => {
             let mut db = db.lock().await;
-            let map = db.all_worker().await;
+            let map = db.running_worker().await;
             let mut res = String::new();
 
             match map {
                 Ok(m) => {
-                    for (k, v) in m {
-                        if v {
-                            res.push_str(&format!("{}: running\n", k,));
-                        } else {
-                            res.push_str(&format!("{}: not running\n", k,));
-                        }
+                    for b in m {
+                        res.push_str(&format!("{}: building {}\n", b.arch, b.build_type));
                     }
 
                     bot.send_message(msg.chat.id, res).await?;
