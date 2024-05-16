@@ -1,9 +1,4 @@
-use std::{
-    fmt::Display,
-    path::{Path, PathBuf},
-    process::Output,
-    time::Duration,
-};
+use std::{fmt::Display, path::Path, process::Output, time::Duration};
 
 use chrono::Local;
 use eyre::OptionExt;
@@ -17,7 +12,6 @@ use tokio::{
 };
 use tracing::{error, info, level_filters::LevelFilter, warn};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
-use walkdir::WalkDir;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Build {
@@ -355,9 +349,11 @@ async fn build_release(
 
     get_output_logged("git", &["pull"], aoscbootstrap_dir, &mut logs).await?;
 
-    let os_dir = aoscbootstrap_dir.join(format!("os-{}", arch));
+    let os_dir_str = format!("os-{}", arch);
+    let os_dir = aoscbootstrap_dir.join(&os_dir_str);
 
     if os_dir.exists() {
+        info!("{os_dir_str} exists, removing ...");
         fs::remove_dir_all(&os_dir).await?;
     }
 
@@ -383,36 +379,17 @@ async fn build_release(
         .await?;
     resp.error_for_status()?;
 
-    let paths = tokio::task::spawn_blocking(move || -> eyre::Result<Vec<PathBuf>> {
-        let mut v = vec![];
-        for i in WalkDir::new(os_dir).min_depth(2).max_depth(2) {
-            let i = i?;
-            if i.path()
-                .extension()
-                .map(|x| x == "xz" || x == "squashfs" || x == "sha256sum")
-                .unwrap_or(false)
-            {
-                v.push(i.path().to_path_buf());
-            }
-        }
-
-        Ok(v)
-    })
-    .await??;
-
-    for p in paths {
-        run_logged_with_retry(
-            "scp",
-            &[
-                "-r",
-                &p.to_string_lossy(),
-                &format!("maintainers@{}:/lookaside/private/aosc-os", host),
-            ],
-            &aoscbootstrap_dir,
-            &mut logs,
-        )
-        .await?;
-    }
+    run_logged_with_retry(
+        "scp",
+        &[
+            "-r",
+            &os_dir.to_string_lossy(),
+            &format!("maintainers@{}:/lookaside/private/aosc-os", host),
+        ],
+        &aoscbootstrap_dir,
+        &mut logs,
+    )
+    .await?;
 
     Ok(logs)
 }
