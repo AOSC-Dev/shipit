@@ -63,7 +63,7 @@ pub async fn answer(
             let archs = if args.is_empty() {
                 ARCHS.iter().map(|x| x.to_owned()).collect::<Vec<_>>()
             } else {
-                args.split_ascii_whitespace().collect()
+                args.trim().split_ascii_whitespace().collect()
             };
 
             for i in archs {
@@ -101,12 +101,12 @@ pub async fn answer(
         Command::Release(args) => {
             let (variants, archs) = if let Some((x, y)) = args.split_once(';') {
                 (
-                    x.split_ascii_whitespace().collect::<Vec<_>>(),
-                    y.split_ascii_whitespace().collect::<Vec<_>>(),
+                    x.trim().split_ascii_whitespace().collect::<Vec<_>>(),
+                    y.trim().split_ascii_whitespace().collect::<Vec<_>>(),
                 )
             } else {
                 (
-                    args.split_ascii_whitespace().collect(),
+                    args.trim().split_ascii_whitespace().collect(),
                     ARCHS.iter().map(|x| x.to_owned()).collect(),
                 )
             };
