@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
 
     tokio::spawn(async move { telegram.dispatch().await });
 
-    info!("minipkgsite running at: {}", listen);
+    info!("shipit running at: {}", listen);
     let app = Router::new()
         .route("/done", post(build_done))
         .route("/workerisstarted", get(build_is_started))

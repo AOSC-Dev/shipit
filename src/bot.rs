@@ -68,7 +68,7 @@ pub async fn answer(
 
             for i in archs {
                 if db.get(i).await.is_ok() {
-                    bot.send_message(msg.chat.id, "Another build task is already running.")
+                    bot.send_message(msg.chat.id, "Another build task is running.")
                         .await?;
                     return Ok(());
                 }
@@ -115,7 +115,7 @@ pub async fn answer(
 
             for i in archs {
                 if db.get(i).await.is_ok() {
-                    bot.send_message(msg.chat.id, "Another build task is already running.")
+                    bot.send_message(msg.chat.id, "Another build task is running.")
                         .await?;
                     return Ok(());
                 }
