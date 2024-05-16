@@ -177,7 +177,7 @@ async fn build_done(
             "Build {}{} {}: {}",
             request.build_type.name,
             if let Some(v) = request.build_type.variants {
-                Cow::Owned(format!("({})", v.join(" ")))
+                Cow::Owned(format!(" ({})", v.join(" ")))
             } else {
                 Cow::Borrowed("")
             },
