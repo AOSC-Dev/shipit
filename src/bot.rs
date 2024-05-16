@@ -217,7 +217,7 @@ pub async fn login_github(
         .and_then(|x| x.error_for_status())
 }
 
-fn truncate<'a>(text: &str) -> Cow<str> {
+fn truncate(text: &str) -> Cow<str> {
     if text.chars().count() > 1000 {
         console::truncate_str(text, 1000, "...")
     } else {

@@ -219,7 +219,7 @@ async fn build_is_started(
     );
 
     let mut db = db.lock().await;
-    let build = db.get(&request.arch).await.context(RedisSnafu);
+    let build = db.get(&request.arch).await;
 
     match build {
         Ok(b) => Ok(Json(Status::Working(b))),

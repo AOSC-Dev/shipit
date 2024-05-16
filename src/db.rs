@@ -59,7 +59,7 @@ impl Db {
 
     pub async fn running_worker(&mut self) -> eyre::Result<Vec<Build>> {
         let s: Vec<String> = redis::cmd("KEYS")
-            .arg(format!("shipit:*"))
+            .arg("shipit:*".to_string())
             .query_async(&mut self.conn)
             .await?;
 
