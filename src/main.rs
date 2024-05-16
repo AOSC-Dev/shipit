@@ -15,7 +15,7 @@ use db::{Build, Db};
 use eyre::Result;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use snafu::{ResultExt, Snafu};
+use snafu::{ensure, ResultExt, Snafu};
 use teloxide::{
     dispatching::{Dispatcher, HandlerExt, UpdateFilterExt},
     dptree,
@@ -164,9 +164,10 @@ async fn build_done(
 ) -> Result<(), BuildRequestError> {
     let AppState { bot, db, secret } = &*state;
 
-    if header.get("secret").map(|x| *x != secret).unwrap_or(true) {
-        return Err(BuildRequestError::BadSecret);
-    }
+    ensure!(
+        header.get("secret").map(|x| *x == secret).unwrap_or(false),
+        BadSecretSnafu
+    );
 
     let mut db = db.lock().await;
     db.set_build_done(&request.arch).await.context(RedisSnafu)?;
@@ -211,9 +212,11 @@ async fn build_is_started(
     Query(request): Query<BuildStartRequest>,
 ) -> Result<Json<Status>, BuildRequestError> {
     let AppState { db, secret, .. } = &*state;
-    if header.get("secret").map(|x| *x != secret).unwrap_or(true) {
-        return Err(BuildRequestError::BadSecret);
-    }
+
+    ensure!(
+        header.get("secret").map(|x| *x == secret).unwrap_or(false),
+        BadSecretSnafu
+    );
 
     let mut db = db.lock().await;
     let build = db.get(&request.arch).await.context(RedisSnafu);
