@@ -17,14 +17,14 @@ pub struct Build {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum BuildType {
     Livekit,
-    Release,
+    Release(Vec<String>),
 }
 
 impl Display for BuildType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BuildType::Livekit => write!(f, "livekit"),
-            BuildType::Release => write!(f, "release"),
+            BuildType::Release(v) => write!(f, "release variant: {}", v.join(" ")),
         }
     }
 }

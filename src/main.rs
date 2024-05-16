@@ -1,7 +1,7 @@
 mod bot;
 mod db;
 
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use axum::{
     extract::{Query, State},
@@ -117,8 +117,14 @@ async fn main() -> Result<()> {
 struct BuildDoneRequest {
     id: i64,
     arch: String,
-    build_type: String,
+    build_type: BuildTypeRequest,
     has_error: bool,
+}
+
+#[derive(Deserialize)]
+struct BuildTypeRequest {
+    name: String,
+    variants: Option<Vec<String>>,
 }
 
 #[derive(Debug, Snafu)]
@@ -168,8 +174,13 @@ async fn build_done(
     bot.send_message(
         ChatId(request.id),
         format!(
-            "Build {} {}: {}",
-            request.build_type,
+            "Build {}{} {}: {}",
+            request.build_type.name,
+            if let Some(v) = request.build_type.variants {
+                Cow::Owned(format!("({})", v.join(" ")))
+            } else {
+                Cow::Borrowed("")
+            },
             if !request.has_error {
                 "success"
             } else {

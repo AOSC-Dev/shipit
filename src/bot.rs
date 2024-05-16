@@ -27,9 +27,13 @@ pub enum Command {
     #[command(description = "Login")]
     Login,
     #[command(
-        description = "Start a build job: /build [type] [archs] (e.g., /build livekit amd64,arm64)"
+        description = "Start a build livekit job: /livekit [archs] (e.g., /livekit amd64,arm64)"
     )]
-    Build(String),
+    Livekit(String),
+    #[command(
+        description = "Start a build release job: /release variants;[archs] (e.g., /release base;amd64,arm64)"
+    )]
+    Release(String),
     #[command(description = "Show queue and server status: /status")]
     Status,
 }
@@ -47,7 +51,7 @@ pub async fn answer(
             bot.send_message(msg.chat.id, Command::descriptions().to_string())
                 .await?;
         }
-        Command::Build(args) => {
+        Command::Livekit(args) => {
             let is_login = is_login(&msg.chat.id, secret).await;
 
             if !is_login {
@@ -55,25 +59,11 @@ pub async fn answer(
             }
 
             let mut db = db.lock().await;
-            let mut args_split = args.split_ascii_whitespace();
 
-            let build_type = args_split.next();
-
-            let build_type = match build_type {
-                Some("livekit") => BuildType::Livekit,
-                Some("release") => BuildType::Release,
-                _ => {
-                    bot.send_message(msg.chat.id, Command::descriptions().to_string())
-                        .await?;
-                    return Ok(());
-                }
-            };
-
-            let archs = args_split.next();
-
-            let archs = match archs {
-                Some(a) => a.split_whitespace().collect::<Vec<_>>(),
-                None => ARCHS.iter().map(|x| x.to_owned()).collect::<Vec<_>>(),
+            let archs = if args.is_empty() {
+                ARCHS.iter().map(|x| x.to_owned()).collect::<Vec<_>>()
+            } else {
+                args.split_ascii_whitespace().collect()
             };
 
             for i in archs {
@@ -89,14 +79,66 @@ pub async fn answer(
                         &Build {
                             id: msg.chat.id.0,
                             arch: i.to_string(),
-                            build_type: build_type.clone(),
+                            build_type: BuildType::Livekit,
                         },
                     )
                     .await
                 {
                     Ok(_) => {
-                        bot.send_message(msg.chat.id, format!("Building {} for {}", build_type, i))
+                        bot.send_message(msg.chat.id, format!("Building {} for livekit", i))
                             .await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(
+                            msg.chat.id,
+                            format!("Failed to mod redis database: {}", e),
+                        )
+                        .await?;
+                    }
+                }
+            }
+        }
+        Command::Release(args) => {
+            let (variants, archs) = if let Some((x, y)) = args.split_once(';') {
+                (
+                    x.split_ascii_whitespace().collect::<Vec<_>>(),
+                    y.split_ascii_whitespace().collect::<Vec<_>>(),
+                )
+            } else {
+                (
+                    args.split_ascii_whitespace().collect(),
+                    ARCHS.iter().map(|x| x.to_owned()).collect(),
+                )
+            };
+
+            let mut db = db.lock().await;
+
+            for i in archs {
+                if db.get(i).await.is_ok() {
+                    bot.send_message(msg.chat.id, "Another build task is already running.")
+                        .await?;
+                    return Ok(());
+                }
+
+                match db
+                    .set_building(
+                        i,
+                        &Build {
+                            id: msg.chat.id.0,
+                            arch: i.to_string(),
+                            build_type: BuildType::Release(
+                                variants.iter().map(|x| x.to_string()).collect(),
+                            ),
+                        },
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        bot.send_message(
+                            msg.chat.id,
+                            format!("Building {} for release ({})", i, variants.join(" ")),
+                        )
+                        .await?;
                     }
                     Err(e) => {
                         bot.send_message(

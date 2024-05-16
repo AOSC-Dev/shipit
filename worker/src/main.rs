@@ -29,14 +29,14 @@ pub struct Build {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum BuildType {
     Livekit,
-    Release,
+    Release(Vec<String>),
 }
 
 impl Display for BuildType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BuildType::Livekit => write!(f, "livekit"),
-            BuildType::Release => write!(f, "release"),
+            BuildType::Release(v) => write!(f, "release variant: {}", v.join(" ")),
         }
     }
 }
@@ -116,7 +116,9 @@ async fn worker(
         info!("{} is started", arch);
         let logs = match build.build_type {
             BuildType::Livekit => build_livekit(client, secret, arch, host, uri, build.id).await?,
-            BuildType::Release => build_release(client, secret, arch, host, uri, build.id).await?,
+            BuildType::Release(variants) => {
+                build_release(client, secret, arch, host, uri, build.id, &variants).await?
+            }
         };
 
         fs::write("./log", logs).await?;
@@ -337,6 +339,7 @@ async fn build_release(
     host: &str,
     uri: &str,
     id: i64,
+    variants: &[String],
 ) -> eyre::Result<Vec<u8>> {
     let aoscbootstrap_dir = Path::new("aoscbootstrap");
     let mut logs = vec![];
@@ -352,16 +355,9 @@ async fn build_release(
 
     get_output_logged("git", &["pull"], aoscbootstrap_dir, &mut logs).await?;
 
-    let mut args = vec![
-        "./contrib/generate-releases.sh",
-        "base",
-        "desktop",
-        "server",
-    ];
+    let mut args = vec!["./contrib/generate-releases.sh"];
 
-    if arch == "amd64" {
-        args.push("desktop+nvidia");
-    }
+    args.extend(variants.iter().map(|x| x.as_str()));
 
     let general_release = get_output_logged("bash", &args, aoscbootstrap_dir, &mut logs).await?;
     let success = general_release.status.success();
@@ -371,7 +367,10 @@ async fn build_release(
         .json(&json!({
             "id": id,
             "arch": arch,
-            "build_type": "release",
+            "build_type": {
+                "name": "release",
+                "variants": variants,
+            },
             "has_error": !success,
         }))
         .send()
