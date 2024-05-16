@@ -383,7 +383,7 @@ async fn build_release(
         "scp",
         &[
             "-r",
-            &os_dir.to_string_lossy(),
+            &os_dir_str,
             &format!("maintainers@{}:/lookaside/private/aosc-os", host),
         ],
         &aoscbootstrap_dir,
