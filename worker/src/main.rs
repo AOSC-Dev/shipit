@@ -355,6 +355,12 @@ async fn build_release(
 
     get_output_logged("git", &["pull"], aoscbootstrap_dir, &mut logs).await?;
 
+    let os_dir = aoscbootstrap_dir.join(format!("os-{}", arch));
+
+    if os_dir.exists() {
+        fs::remove_dir_all(&os_dir).await?;
+    }
+
     let mut args = vec!["./contrib/generate-releases.sh"];
 
     args.extend(variants.iter().map(|x| x.as_str()));
@@ -379,7 +385,7 @@ async fn build_release(
 
     let paths = tokio::task::spawn_blocking(move || -> eyre::Result<Vec<PathBuf>> {
         let mut v = vec![];
-        for i in WalkDir::new(aoscbootstrap_dir).min_depth(2).max_depth(2) {
+        for i in WalkDir::new(os_dir).min_depth(2).max_depth(2) {
             let i = i?;
             if i.path()
                 .extension()
