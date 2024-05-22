@@ -5,7 +5,7 @@ use eyre::OptionExt;
 use reqwest::{Client, ClientBuilder};
 use serde::{Deserialize, Serialize};
 use tokio::{
-    fs::{self, read_dir},
+    fs::{self, create_dir_all, read_dir},
     process::Command,
     time::{sleep, Instant},
 };
@@ -139,7 +139,7 @@ async fn worker(
     if let Status::Working(build) = status {
         info!("{} is started", arch);
         let (logs, success, push_success) = match build.build_type {
-            BuildType::Livekit => build_livekit(host, upload_ssh_key).await?,
+            BuildType::Livekit => build_livekit(host, upload_ssh_key, arch).await?,
             BuildType::Release(ref variants) => {
                 build_release(arch, variants, host, upload_ssh_key).await?
             }
@@ -203,7 +203,11 @@ async fn worker(
     Ok(())
 }
 
-async fn build_livekit(host: &str, upload_ssh_key: &str) -> eyre::Result<(Vec<u8>, bool, bool)> {
+async fn build_livekit(
+    host: &str,
+    upload_ssh_key: &str,
+    arch: &str,
+) -> eyre::Result<(Vec<u8>, bool, bool)> {
     let mklive_dir = Path::new("aosc-mklive");
     let mut logs = vec![];
     if !mklive_dir.is_dir() {
@@ -246,35 +250,40 @@ async fn build_livekit(host: &str, upload_ssh_key: &str) -> eyre::Result<(Vec<u8
     let mklive = get_output_logged("bash", &["./aosc-mklive.sh"], mklive_dir, &mut logs).await?;
     let success = mklive.status.success();
 
-    let mut push_success = true;
+    let dir = current_dir()?;
+    let os_dir_str = format!("os-{}", arch);
+    let livekit_dir = dir.join(&os_dir_str).join("livekit");
+    create_dir_all(&livekit_dir).await?;
 
-    let mut dir = read_dir(mklive_dir).await?;
+    let mut dir_iter = read_dir(mklive_dir).await?;
     loop {
-        if let Ok(Some(i)) = dir.next_entry().await {
+        if let Ok(Some(i)) = dir_iter.next_entry().await {
             if i.path()
                 .extension()
                 .map(|x| x == "iso" || x == "sha256sum")
                 .unwrap_or(false)
             {
-                push_success = run_logged_with_retry(
-                    "scp",
-                    &[
-                        "-i",
-                        upload_ssh_key,
-                        "-r",
-                        &i.path().canonicalize()?.to_string_lossy(),
-                        &format!("maintainers@{}:/lookaside/private/aosc-os/", host),
-                    ],
-                    current_dir()?.as_path(),
-                    &mut logs,
-                )
-                .await
-                .unwrap_or(false);
+                fs::copy(i.path(), &livekit_dir).await?;
             }
         } else {
             break;
         }
     }
+
+    let push_success = run_logged_with_retry(
+        "scp",
+        &[
+            "-i",
+            upload_ssh_key,
+            "-r",
+            &os_dir_str,
+            &format!("maintainers@{}:/lookaside/private/aosc-os", host),
+        ],
+        &dir,
+        &mut logs,
+    )
+    .await
+    .unwrap_or(false);
 
     Ok((logs, success, push_success))
 }
