@@ -1,4 +1,4 @@
-use std::{fmt::Display, path::Path, process::Output, time::Duration};
+use std::{env::current_dir, fmt::Display, path::Path, process::Output, time::Duration};
 
 use chrono::Local;
 use eyre::OptionExt;
@@ -264,10 +264,10 @@ async fn build_livekit(host: &str, upload_ssh_key: &str) -> eyre::Result<(Vec<u8
                         "-i",
                         upload_ssh_key,
                         "-r",
-                        &i.path().to_string_lossy(),
+                        &i.path().canonicalize()?.to_string_lossy(),
                         &format!("maintainers@{}:/lookaside/private/aosc-os/", host),
                     ],
-                    &mklive_dir,
+                    current_dir()?.as_path(),
                     &mut logs,
                 )
                 .await
