@@ -161,29 +161,27 @@ async fn worker(
             &[
                 "-i",
                 &upload_ssh_key,
-                "./log",
+                &file_name,
                 &format!("maintainers@{}:/buildit/logs", host),
             ],
             Path::new("."),
             &mut scp_log,
         )
-        .await?
+        .await
+        .unwrap_or(false)
         {
-            fs::remove_file("./log").await?;
             log_url = Some(format!("https://buildit.aosc.io/logs/{file_name}"));
+            tokio::spawn(async move { fs::remove_file(file_name).await });
         } else {
             error!(
                 "Failed to scp log to repo: {}",
                 String::from_utf8_lossy(&scp_log)
             );
-        };
-
-        if log_url.is_none() {
             let dir = Path::new("./push_failed_logs");
             let to = dir.join(&file_name);
             fs::create_dir_all(dir).await?;
             fs::copy(file_name, to).await?;
-        }
+        };
 
         let resp = client
             .post(format!("{uri}/done"))
