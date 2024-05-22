@@ -73,6 +73,12 @@ pub async fn answer(
                     return Ok(());
                 }
 
+                if !ARCHS.contains(&i) {
+                    bot.send_message(msg.chat.id, format!("Unknown arch: {}", i))
+                       .await?;
+                    return Ok(());
+                }
+
                 match db
                     .set_building(
                         i,
