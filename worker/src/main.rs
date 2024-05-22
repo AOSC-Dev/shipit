@@ -4,7 +4,6 @@ use chrono::Local;
 use eyre::OptionExt;
 use reqwest::{Client, ClientBuilder};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tokio::{
     fs::{self, read_dir},
     process::Command,
@@ -30,7 +29,7 @@ impl Display for BuildType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BuildType::Livekit => write!(f, "livekit"),
-            BuildType::Release(v) => write!(f, "release variant: {}", v.join(" ")),
+            BuildType::Release(_) => write!(f, "release"),
         }
     }
 }
@@ -88,6 +87,15 @@ async fn main() -> eyre::Result<()> {
     }
 }
 
+#[derive(Debug, Serialize)]
+struct DoneRequest {
+    id: i64,
+    arch: String,
+    build_type: BuildType,
+    has_error: bool,
+    log_url: Option<String>,
+}
+
 async fn worker(
     client: &Client,
     uri: &str,
@@ -108,11 +116,9 @@ async fn worker(
 
     if let Status::Working(build) = status {
         info!("{} is started", arch);
-        let logs = match build.build_type {
-            BuildType::Livekit => build_livekit(client, secret, arch, host, uri, build.id).await?,
-            BuildType::Release(variants) => {
-                build_release(client, secret, arch, host, uri, build.id, &variants).await?
-            }
+        let (logs, success) = match build.build_type {
+            BuildType::Livekit => build_livekit(host).await?,
+            BuildType::Release(ref variants) => build_release(arch, variants).await?,
         };
 
         fs::write("./log", logs).await?;
@@ -154,19 +160,27 @@ async fn worker(
             fs::create_dir_all(dir).await?;
             fs::copy("./log", to).await?;
         }
+
+        let resp = client
+            .post(format!("{uri}/done"))
+            .header("secret", secret)
+            .json(&serde_json::to_string(&DoneRequest {
+                id: build.id,
+                arch: build.arch,
+                build_type: build.build_type.clone(),
+                has_error: !success,
+                log_url
+            })?)
+            .send()
+            .await?;
+
+        resp.error_for_status()?;
     }
 
     Ok(())
 }
 
-async fn build_livekit(
-    client: &Client,
-    secret: &str,
-    arch: &str,
-    host: &str,
-    uri: &str,
-    id: i64,
-) -> eyre::Result<Vec<u8>> {
+async fn build_livekit(host: &str) -> eyre::Result<(Vec<u8>, bool)> {
     let mklive_dir = Path::new("aosc-mklive");
     let mut logs = vec![];
     if !mklive_dir.is_dir() {
@@ -208,18 +222,6 @@ async fn build_livekit(
     }
     let mklive = get_output_logged("bash", &["./aosc-mklive.sh"], mklive_dir, &mut logs).await?;
     let success = mklive.status.success();
-    let resp = client
-        .post(format!("{uri}/done"))
-        .header("secret", secret)
-        .json(&json!({
-            "id": id,
-            "arch": arch,
-            "build_type": "livekit",
-            "has_error": !success,
-        }))
-        .send()
-        .await?;
-    resp.error_for_status()?;
 
     let mut dir = read_dir(mklive_dir).await?;
     loop {
@@ -246,7 +248,7 @@ async fn build_livekit(
         }
     }
 
-    Ok(logs)
+    Ok((logs, success))
 }
 
 async fn get_output_logged(
@@ -326,15 +328,7 @@ async fn run_logged_with_retry(
     Ok(false)
 }
 
-async fn build_release(
-    client: &Client,
-    secret: &str,
-    arch: &str,
-    host: &str,
-    uri: &str,
-    id: i64,
-    variants: &[String],
-) -> eyre::Result<Vec<u8>> {
+async fn build_release(arch: &str, variants: &[String]) -> eyre::Result<(Vec<u8>, bool)> {
     let aoscbootstrap_dir = Path::new("aoscbootstrap");
     let mut logs = vec![];
     if !aoscbootstrap_dir.is_dir() {
@@ -363,33 +357,6 @@ async fn build_release(
 
     let general_release = get_output_logged("bash", &args, aoscbootstrap_dir, &mut logs).await?;
     let success = general_release.status.success();
-    let resp = client
-        .post(format!("{uri}/done"))
-        .header("secret", secret)
-        .json(&json!({
-            "id": id,
-            "arch": arch,
-            "build_type": {
-                "name": "release",
-                "variants": variants,
-            },
-            "has_error": !success,
-        }))
-        .send()
-        .await?;
-    resp.error_for_status()?;
 
-    run_logged_with_retry(
-        "scp",
-        &[
-            "-r",
-            &os_dir_str,
-            &format!("maintainers@{}:/lookaside/private/aosc-os", host),
-        ],
-        &aoscbootstrap_dir,
-        &mut logs,
-    )
-    .await?;
-
-    Ok(logs)
+    Ok((logs, success))
 }
