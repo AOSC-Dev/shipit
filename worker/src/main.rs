@@ -183,21 +183,35 @@ async fn worker(
             fs::copy(file_name, to).await?;
         };
 
-        let resp = client
-            .post(format!("{uri}/done"))
-            .header("secret", secret)
-            .json(&DoneRequest {
-                id: build.id,
-                arch: build.arch,
-                build_type: BuildTypeRequest::from(build.build_type),
-                has_error: !success,
-                push_success,
-                log_url,
-            })
-            .send()
-            .await?;
+        let request = DoneRequest {
+            id: build.id,
+            arch: build.arch,
+            build_type: BuildTypeRequest::from(build.build_type),
+            has_error: !success,
+            push_success,
+            log_url,
+        };
 
-        resp.error_for_status()?;
+        for i in 1..=3 {
+            let resp = client
+                .post(format!("{uri}/done"))
+                .header("secret", secret)
+                .json(&request)
+                .send()
+                .await
+                .and_then(|r| r.error_for_status());
+
+            match resp {
+                Ok(_) => break,
+                Err(e) => {
+                    error!("{e}");
+                    if i == 3 {
+                        error!("Failed too many times to POST /done");
+                        return Err(e.into());
+                    }
+                }
+            }
+        }
     }
 
     Ok(())
