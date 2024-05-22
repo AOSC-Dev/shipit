@@ -161,7 +161,7 @@ async fn worker(
             &[
                 "-i",
                 &upload_ssh_key,
-                &file_name,
+                &format!("./{}", &file_name),
                 &format!("maintainers@{}:/buildit/logs", host),
             ],
             Path::new("."),
