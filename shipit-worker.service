@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 Restart=always
 RestartSec=30
-ExecStart=cargo run --release --bin worker
+ExecStart=cargo run --release -p worker
 WorkingDirectory=/buildroots/shipit
 Environment=RUST_LOG=info
 
