@@ -1,0 +1,14 @@
+[Unit]
+Description=AOSC ShipIt! Worker
+After=network.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=30
+ExecStart=cargo run --release --bin worker
+WorkingDirectory=/buildroots/shipit
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target
