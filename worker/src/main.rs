@@ -103,6 +103,21 @@ struct BuildTypeRequest {
     variants: Option<Vec<String>>,
 }
 
+impl From<BuildType> for BuildTypeRequest {
+    fn from(value: BuildType) -> Self {
+        match value {
+            BuildType::Livekit => BuildTypeRequest {
+                name: "livekit".to_owned(),
+                variants: None,
+            },
+            BuildType::Release(v) => BuildTypeRequest {
+                name: "release".to_owned(),
+                variants: Some(v),
+            },
+        }
+    }
+}
+
 async fn worker(
     client: &Client,
     uri: &str,
@@ -130,14 +145,14 @@ async fn worker(
             }
         };
 
-        fs::write("./log", logs).await?;
-
         let file_name = format!(
             "shipit-{}-{}-{}.txt",
             arch,
             gethostname::gethostname().to_string_lossy(),
             Local::now().format("%Y-%m-%d-%H:%M:%S")
         );
+
+        fs::write(&file_name, logs).await?;
 
         let mut log_url = None;
         let mut scp_log = vec![];
@@ -165,9 +180,9 @@ async fn worker(
 
         if log_url.is_none() {
             let dir = Path::new("./push_failed_logs");
-            let to = dir.join(file_name);
+            let to = dir.join(&file_name);
             fs::create_dir_all(dir).await?;
-            fs::copy("./log", to).await?;
+            fs::copy(file_name, to).await?;
         }
 
         let resp = client
@@ -176,16 +191,7 @@ async fn worker(
             .json(&DoneRequest {
                 id: build.id,
                 arch: build.arch,
-                build_type: match build.build_type {
-                    BuildType::Livekit => BuildTypeRequest {
-                        name: "livekit".to_owned(),
-                        variants: None,
-                    },
-                    BuildType::Release(v) => BuildTypeRequest {
-                        name: "release".to_owned(),
-                        variants: Some(v),
-                    },
-                },
+                build_type: BuildTypeRequest::from(build.build_type),
                 has_error: !success,
                 push_success,
                 log_url,
