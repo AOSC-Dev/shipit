@@ -27,11 +27,11 @@ pub enum Command {
     #[command(description = "Login")]
     Login,
     #[command(
-        description = "Start a build livekit job: /livekit [archs] (e.g., /livekit amd64,arm64)"
+        description = "Start a build livekit job: /livekit [archs] (e.g., /livekit amd64 arm64)"
     )]
     Livekit(String),
     #[command(
-        description = "Start a build release job: /release variants;[archs] (e.g., /release base;amd64,arm64)"
+        description = "Start a build release job: /release variants;[archs] (e.g., /release base desktop;amd64 arm64)"
     )]
     Release(String),
     #[command(description = "Show queue and server status: /status")]
