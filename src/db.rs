@@ -65,7 +65,8 @@ impl Db {
 
         let mut v = vec![];
         for i in s {
-            v.push(serde_json::from_str(&i)?);
+            let entry = self.conn.get::<_, String>(i).await?;
+            v.push(serde_json::from_str(&entry)?);
         }
 
         Ok(v)
