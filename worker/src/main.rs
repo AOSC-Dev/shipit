@@ -118,8 +118,8 @@ async fn worker(
     if let Status::Working(build) = status {
         info!("{} is started", arch);
         let (logs, success, push_success) = match build.build_type {
-            BuildType::Livekit => build_livekit(host).await?,
-            BuildType::Release(ref variants) => build_release(arch, variants, host).await?,
+            BuildType::Livekit => build_livekit(host, upload_ssh_key).await?,
+            BuildType::Release(ref variants) => build_release(arch, variants, host, upload_ssh_key).await?,
         };
 
         fs::write("./log", logs).await?;
@@ -182,7 +182,7 @@ async fn worker(
     Ok(())
 }
 
-async fn build_livekit(host: &str) -> eyre::Result<(Vec<u8>, bool, bool)> {
+async fn build_livekit(host: &str, upload_ssh_key: &str) -> eyre::Result<(Vec<u8>, bool, bool)> {
     let mklive_dir = Path::new("aosc-mklive");
     let mut logs = vec![];
     if !mklive_dir.is_dir() {
@@ -238,6 +238,8 @@ async fn build_livekit(host: &str) -> eyre::Result<(Vec<u8>, bool, bool)> {
                 push_success = run_logged_with_retry(
                     "scp",
                     &[
+                        "-i",
+                        upload_ssh_key,
                         "-r",
                         &i.path().to_string_lossy(),
                         &format!("maintainers@{}:/lookaside/private/aosc-os/", host),
@@ -337,6 +339,7 @@ async fn build_release(
     arch: &str,
     variants: &[String],
     host: &str,
+    upload_ssh_key: &str
 ) -> eyre::Result<(Vec<u8>, bool, bool)> {
     let aoscbootstrap_dir = Path::new("aoscbootstrap");
     let mut logs = vec![];
@@ -370,6 +373,8 @@ async fn build_release(
     let scp_image = run_logged_with_retry(
         "scp",
         &[
+            "-i",
+            upload_ssh_key,
             "-r",
             &os_dir_str,
             &format!("maintainers@{}:/lookaside/private/aosc-os", host),
