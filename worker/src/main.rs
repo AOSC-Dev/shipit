@@ -87,14 +87,20 @@ async fn main() -> eyre::Result<()> {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct DoneRequest {
     id: i64,
     arch: String,
-    build_type: BuildType,
+    build_type: BuildTypeRequest,
     has_error: bool,
     log_url: Option<String>,
     push_success: bool,
+}
+
+#[derive(Serialize)]
+struct BuildTypeRequest {
+    name: String,
+    variants: Option<Vec<String>>,
 }
 
 async fn worker(
@@ -119,7 +125,9 @@ async fn worker(
         info!("{} is started", arch);
         let (logs, success, push_success) = match build.build_type {
             BuildType::Livekit => build_livekit(host, upload_ssh_key).await?,
-            BuildType::Release(ref variants) => build_release(arch, variants, host, upload_ssh_key).await?,
+            BuildType::Release(ref variants) => {
+                build_release(arch, variants, host, upload_ssh_key).await?
+            }
         };
 
         fs::write("./log", logs).await?;
@@ -168,7 +176,16 @@ async fn worker(
             .json(&DoneRequest {
                 id: build.id,
                 arch: build.arch,
-                build_type: build.build_type.clone(),
+                build_type: match build.build_type {
+                    BuildType::Livekit => BuildTypeRequest {
+                        name: "livekit".to_owned(),
+                        variants: None,
+                    },
+                    BuildType::Release(v) => BuildTypeRequest {
+                        name: "release".to_owned(),
+                        variants: Some(v),
+                    },
+                },
                 has_error: !success,
                 push_success,
                 log_url,
@@ -339,7 +356,7 @@ async fn build_release(
     arch: &str,
     variants: &[String],
     host: &str,
-    upload_ssh_key: &str
+    upload_ssh_key: &str,
 ) -> eyre::Result<(Vec<u8>, bool, bool)> {
     let aoscbootstrap_dir = Path::new("aoscbootstrap");
     let mut logs = vec![];
