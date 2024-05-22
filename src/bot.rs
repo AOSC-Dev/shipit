@@ -67,15 +67,15 @@ pub async fn answer(
             };
 
             for i in archs {
-                if db.get(i).await.is_ok() {
-                    bot.send_message(msg.chat.id, "Another build task is running.")
-                        .await?;
-                    return Ok(());
-                }
-
                 if !ARCHS.contains(&i) {
                     bot.send_message(msg.chat.id, format!("Unknown arch: {}", i))
                        .await?;
+                    continue;
+                }
+
+                if db.get(i).await.is_ok() {
+                    bot.send_message(msg.chat.id, "Another build task is running.")
+                        .await?;
                     return Ok(());
                 }
 
@@ -120,6 +120,12 @@ pub async fn answer(
             let mut db = db.lock().await;
 
             for i in archs {
+                if !ARCHS.contains(&i) {
+                    bot.send_message(msg.chat.id, format!("Unknown arch: {}", i))
+                       .await?;
+                    continue;
+                }
+
                 if db.get(i).await.is_ok() {
                     bot.send_message(msg.chat.id, "Another build task is running.")
                         .await?;
