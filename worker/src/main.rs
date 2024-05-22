@@ -94,6 +94,7 @@ struct DoneRequest {
     build_type: BuildType,
     has_error: bool,
     log_url: Option<String>,
+    push_success: bool,
 }
 
 async fn worker(
@@ -116,9 +117,9 @@ async fn worker(
 
     if let Status::Working(build) = status {
         info!("{} is started", arch);
-        let (logs, success) = match build.build_type {
+        let (logs, success, push_success) = match build.build_type {
             BuildType::Livekit => build_livekit(host).await?,
-            BuildType::Release(ref variants) => build_release(arch, variants).await?,
+            BuildType::Release(ref variants) => build_release(arch, variants, host).await?,
         };
 
         fs::write("./log", logs).await?;
@@ -164,13 +165,14 @@ async fn worker(
         let resp = client
             .post(format!("{uri}/done"))
             .header("secret", secret)
-            .json(&serde_json::to_string(&DoneRequest {
+            .json(&DoneRequest {
                 id: build.id,
                 arch: build.arch,
                 build_type: build.build_type.clone(),
                 has_error: !success,
-                log_url
-            })?)
+                push_success,
+                log_url,
+            })
             .send()
             .await?;
 
@@ -180,7 +182,7 @@ async fn worker(
     Ok(())
 }
 
-async fn build_livekit(host: &str) -> eyre::Result<(Vec<u8>, bool)> {
+async fn build_livekit(host: &str) -> eyre::Result<(Vec<u8>, bool, bool)> {
     let mklive_dir = Path::new("aosc-mklive");
     let mut logs = vec![];
     if !mklive_dir.is_dir() {
@@ -223,6 +225,8 @@ async fn build_livekit(host: &str) -> eyre::Result<(Vec<u8>, bool)> {
     let mklive = get_output_logged("bash", &["./aosc-mklive.sh"], mklive_dir, &mut logs).await?;
     let success = mklive.status.success();
 
+    let mut push_success = true;
+
     let mut dir = read_dir(mklive_dir).await?;
     loop {
         if let Ok(Some(i)) = dir.next_entry().await {
@@ -231,24 +235,25 @@ async fn build_livekit(host: &str) -> eyre::Result<(Vec<u8>, bool)> {
                 .map(|x| x == "iso" || x == "sha256sum")
                 .unwrap_or(false)
             {
-                run_logged_with_retry(
+                push_success = run_logged_with_retry(
                     "scp",
                     &[
                         "-r",
                         &i.path().to_string_lossy(),
-                        &format!("maintainers@{}:/lookaside/private/aosc-os", host),
+                        &format!("maintainers@{}:/lookaside/private/aosc-os/", host),
                     ],
                     &mklive_dir,
                     &mut logs,
                 )
-                .await?;
+                .await
+                .unwrap_or(false);
             }
         } else {
             break;
         }
     }
 
-    Ok((logs, success))
+    Ok((logs, success, push_success))
 }
 
 async fn get_output_logged(
@@ -328,7 +333,11 @@ async fn run_logged_with_retry(
     Ok(false)
 }
 
-async fn build_release(arch: &str, variants: &[String]) -> eyre::Result<(Vec<u8>, bool)> {
+async fn build_release(
+    arch: &str,
+    variants: &[String],
+    host: &str,
+) -> eyre::Result<(Vec<u8>, bool, bool)> {
     let aoscbootstrap_dir = Path::new("aoscbootstrap");
     let mut logs = vec![];
     if !aoscbootstrap_dir.is_dir() {
@@ -358,5 +367,18 @@ async fn build_release(arch: &str, variants: &[String]) -> eyre::Result<(Vec<u8>
     let general_release = get_output_logged("bash", &args, aoscbootstrap_dir, &mut logs).await?;
     let success = general_release.status.success();
 
-    Ok((logs, success))
+    let scp_image = run_logged_with_retry(
+        "scp",
+        &[
+            "-r",
+            &os_dir_str,
+            &format!("maintainers@{}:/lookaside/private/aosc-os", host),
+        ],
+        &aoscbootstrap_dir,
+        &mut logs,
+    )
+    .await
+    .unwrap_or(false);
+
+    Ok((logs, success, scp_image))
 }

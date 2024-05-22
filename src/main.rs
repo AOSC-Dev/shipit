@@ -120,6 +120,7 @@ struct BuildDoneRequest {
     build_type: BuildTypeRequest,
     has_error: bool,
     log_url: Option<String>,
+    push_success: bool,
 }
 
 #[derive(Deserialize)]
@@ -176,7 +177,7 @@ async fn build_done(
     bot.send_message(
         ChatId(request.id),
         format!(
-            "Build {}{} {}: {}\nlog url: {}",
+            "Build {}{} {}: {}\nlog url: {}\nPush success: {}",
             request.build_type.name,
             if let Some(v) = request.build_type.variants {
                 Cow::Owned(format!(" ({})", v.join(" ")))
@@ -193,7 +194,8 @@ async fn build_done(
                 Cow::Owned(url)
             } else {
                 Cow::Borrowed("Failed to push log")
-            }
+            },
+            request.push_success
         ),
     )
     .await?;
