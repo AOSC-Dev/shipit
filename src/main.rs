@@ -121,6 +121,7 @@ struct BuildDoneRequest {
     has_error: bool,
     log_url: Option<String>,
     push_success: bool,
+    date: String
 }
 
 #[derive(Deserialize)]
