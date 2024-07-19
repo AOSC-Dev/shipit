@@ -1,4 +1,4 @@
-use std::{env::current_dir, fmt::Display, path::Path, process::Output, sync::Arc, time::Duration};
+use std::{env::current_dir, fmt::Display, path::Path, process::Output, time::Duration};
 
 use chrono::Local;
 use eyre::OptionExt;
@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use tokio::{
     fs::{self, create_dir_all, read_dir},
     process::Command,
-    task::spawn_blocking,
     time::{sleep, Instant},
 };
 use tracing::{error, info, level_filters::LevelFilter, warn};
@@ -96,7 +95,6 @@ struct DoneRequest {
     has_error: bool,
     log_url: Option<String>,
     push_success: bool,
-    date: String,
 }
 
 #[derive(Serialize)]
@@ -140,7 +138,7 @@ async fn worker(
 
     if let Status::Working(build) = status {
         info!("{} is started", arch);
-        let (logs, success, push_success, date) = match build.build_type {
+        let (logs, success, push_success) = match build.build_type {
             BuildType::Livekit => build_livekit(host, upload_ssh_key, arch).await?,
             BuildType::Release(ref variants) => {
                 build_release(arch, variants, host, upload_ssh_key).await?
@@ -192,7 +190,6 @@ async fn worker(
             has_error: !success,
             push_success,
             log_url,
-            date,
         };
 
         for i in 1..=3 {
@@ -224,7 +221,7 @@ async fn build_livekit(
     host: &str,
     upload_ssh_key: &str,
     arch: &str,
-) -> eyre::Result<(Vec<u8>, bool, bool, String)> {
+) -> eyre::Result<(Vec<u8>, bool, bool)> {
     let mklive_dir = Path::new("aosc-mklive");
     let mut logs = vec![];
     if !mklive_dir.is_dir() {
@@ -267,12 +264,9 @@ async fn build_livekit(
     let mklive = get_output_logged("bash", &["./aosc-mklive.sh"], mklive_dir, &mut logs).await?;
     let success = mklive.status.success();
 
-    let date = Local::now().format("%Y-%m-%d-%H:%M:%S").to_string();
-
     let dir = current_dir()?;
-    let date_dir = dir.join(&date);
     let os_dir_str = format!("os-{}", arch);
-    let livekit_dir = date_dir.join(&os_dir_str).join("livekit");
+    let livekit_dir = dir.join(&os_dir_str).join("livekit");
     create_dir_all(&livekit_dir).await?;
 
     let mut dir_iter = read_dir(mklive_dir).await?;
@@ -296,8 +290,8 @@ async fn build_livekit(
             "-i",
             upload_ssh_key,
             "-r",
-            &date_dir.to_string_lossy().to_string(),
-            &format!("maintainers@{}:/lookaside/private/", host),
+            &os_dir_str,
+            &format!("maintainers@{}:/lookaside/private/aosc-os", host),
         ],
         &dir,
         &mut logs,
@@ -305,7 +299,7 @@ async fn build_livekit(
     .await
     .unwrap_or(false);
 
-    Ok((logs, success, push_success, date))
+    Ok((logs, success, push_success))
 }
 
 async fn get_output_logged(
@@ -390,7 +384,7 @@ async fn build_release(
     variants: &[String],
     host: &str,
     upload_ssh_key: &str,
-) -> eyre::Result<(Vec<u8>, bool, bool, String)> {
+) -> eyre::Result<(Vec<u8>, bool, bool)> {
     let aoscbootstrap_dir = Path::new("aoscbootstrap");
     let mut logs = vec![];
     if !aoscbootstrap_dir.is_dir() {
@@ -405,11 +399,13 @@ async fn build_release(
 
     get_output_logged("git", &["pull"], aoscbootstrap_dir, &mut logs).await?;
 
-    let date = Local::now().format("%Y-%m-%d-%H:%M:%S").to_string();
-
     let os_dir_str = format!("os-{}", arch);
-    let date_dir = Arc::new(aoscbootstrap_dir.join(&date));
-    let date_dir_c = date_dir.clone();
+    let os_dir = aoscbootstrap_dir.join(&os_dir_str);
+
+    if os_dir.exists() {
+        info!("{os_dir_str} exists, removing ...");
+        fs::remove_dir_all(&os_dir).await?;
+    }
 
     let mut args = vec!["./contrib/generate-releases.sh"];
 
@@ -418,27 +414,14 @@ async fn build_release(
     let general_release = get_output_logged("bash", &args, aoscbootstrap_dir, &mut logs).await?;
     let success = general_release.status.success();
 
-    let os_dir_str_c = os_dir_str.clone();
-
-    spawn_blocking(move || -> eyre::Result<()> {
-        fs_extra::move_items(
-            &[aoscbootstrap_dir.join(&os_dir_str_c)],
-            date_dir_c.as_path(),
-            &fs_extra::dir::CopyOptions::new(),
-        )?;
-
-        Ok(())
-    })
-    .await??;
-
     let scp_image = run_logged_with_retry(
         "scp",
         &[
             "-i",
             upload_ssh_key,
             "-r",
-            &date_dir.to_string_lossy().to_string(),
-            &format!("maintainers@{}:/lookaside/private/", host),
+            &os_dir_str,
+            &format!("maintainers@{}:/lookaside/private/aosc-os", host),
         ],
         &aoscbootstrap_dir,
         &mut logs,
@@ -446,5 +429,5 @@ async fn build_release(
     .await
     .unwrap_or(false);
 
-    Ok((logs, success, scp_image, date))
+    Ok((logs, success, scp_image))
 }
